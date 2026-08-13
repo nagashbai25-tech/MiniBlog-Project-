@@ -1,12 +1,13 @@
 from flask import Flask, render_template, request, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+import os 
 
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = "postgresql://${db_user}:${db_password}@db:5432/${db_name}"
+app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("POSTGRES_URL")
 db = SQLAlchemy(app)
 
-
+print(os.getenv("POSTGRES_URL"))  # Debugging line to check the database URI
 class Post(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
@@ -23,14 +24,13 @@ class Comment(db.Model):
     post_id = db.Column(db.Integer, db.ForeignKey("post.id"), nullable=False)
 
 
-# ---- READ: список всех постов ----
+
 @app.route("/")
 def index():
     posts = Post.query.order_by(Post.created_at.desc()).all()
     return render_template("index.html", posts=posts)
 
 
-# ---- CREATE: форма и сохранение нового поста ----
 @app.route("/new", methods=["GET", "POST"])
 def new_post():
     if request.method == "POST":
@@ -41,14 +41,13 @@ def new_post():
     return render_template("new_post.html")
 
 
-# ---- READ: один пост + комментарии ----
+
 @app.route("/post/<int:post_id>")
 def view_post(post_id):
     post = Post.query.get_or_404(post_id)
     return render_template("post.html", post=post)
 
 
-# ---- UPDATE: редактирование поста ----
 @app.route("/post/<int:post_id>/edit", methods=["GET", "POST"])
 def edit_post(post_id):
     post = Post.query.get_or_404(post_id)
@@ -60,7 +59,6 @@ def edit_post(post_id):
     return render_template("edit_post.html", post=post)
 
 
-# ---- DELETE: удаление поста ----
 @app.route("/post/<int:post_id>/delete", methods=["POST"])
 def delete_post(post_id):
     post = Post.query.get_or_404(post_id)
@@ -69,7 +67,6 @@ def delete_post(post_id):
     return redirect(url_for("index"))
 
 
-# ---- CREATE: добавление комментария к посту ----
 @app.route("/post/<int:post_id>/comment", methods=["POST"])
 def add_comment(post_id):
     post = Post.query.get_or_404(post_id)
@@ -79,7 +76,6 @@ def add_comment(post_id):
     return redirect(url_for("view_post", post_id=post.id))
 
 
-# простая проверка "жив ли сервис" — пригодится позже для мониторинга
 @app.route("/health")
 def health():
     return {"status": "ok"}

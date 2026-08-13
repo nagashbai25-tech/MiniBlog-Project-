@@ -1,5 +1,4 @@
 FROM python:3.12-alpine
-RUN useradd -ms /bin/sh -u 1001 app
 
 WORKDIR /app
 
