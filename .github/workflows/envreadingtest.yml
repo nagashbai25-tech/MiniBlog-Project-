@@ -16,3 +16,16 @@ jobs:
                   echo " test2 $TEST2"
                   echo " tes1 $TEST"
                   echo " test3 $Test3"
+
+            - name: echotest3
+              run: |
+                  echo " test2 $TEST2"
+                  echo " tes1 $TEST"    
+        
+    second_job:
+        runs-on: ubuntu-24.04
+        steps:
+            - name: echotest4
+              run: |
+                  echo " test2 $TEST2"
+                  echo " tes1 $TEST" 
