@@ -1,0 +1,25 @@
+name: job
+on: [push]
+jobs:
+    first_job:
+        runs-on: ubuntu-24.04
+        steps:
+            - run: echo "firest stage just testing"
+    second_job: 
+        runs-on: ubuntu-24.04
+        steps: 
+            - run: echo "second stage also testing"
+    third_job:
+        runs-on: ubuntu-24.04
+        steps: 
+            - run: echo "Here we trying to use needs for to spesife structure"
+        needs: 
+            - first_job
+            - second_job
+    forth_job: 
+        runs-on: ubuntu-24.04
+        needs:
+            - second_job
+            - third_job
+        steps: 
+            - run: echo " to see if i can see sturcutre"
