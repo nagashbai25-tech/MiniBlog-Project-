@@ -1,0 +1,12 @@
+- name: Deploy 
+  hosts: prod
+  become: true
+  tasks:
+    - name: Create app directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /opt/miniblog
+        - /opt/miniblog/nginx
