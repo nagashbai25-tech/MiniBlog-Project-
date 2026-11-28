@@ -1,59 +1,134 @@
-- name: Deploy 
+---
+- name: Deploy MiniBlog
   hosts: prod
   become: true
+
   tasks:
+    - name: Check the database password
+      ansible.builtin.assert:
+        that:
+          - vault_db_password is defined
+          - vault_db_password | length >= 12
+          - vault_db_password != "change-me"
+          - "\"'\" not in vault_db_password"
+        fail_msg: >-
+          Задайте vault_db_password в group_vars/prod/vault.yml
+          (минимум 12 символов, без одинарной кавычки)
+        quiet: true
+      no_log: true
+
+    - name: Check that the OS is supported
+      ansible.builtin.assert:
+        that: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+        fail_msg: "Поддерживаются только Ubuntu и Debian"
+        quiet: true
+
+    - name: Install packages for the Docker repository
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - python3-debian
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Add the Docker repository
+      ansible.builtin.deb822_repository:
+        name: docker
+        types: deb
+        uris: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
+        suites: "{{ ansible_facts['distribution_release'] }}"
+        components: stable
+        architectures: "{{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else 'arm64' }}"
+        signed_by: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}/gpg"
+      register: docker_repo
+
+    - name: Install Docker
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: "{{ docker_repo is changed }}"
+
+    - name: Start Docker and enable it on boot
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add the user to the docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
     - name: Create app directories
       ansible.builtin.file:
         path: "{{ item }}"
         state: directory
         mode: "0755"
       loop:
-        - /opt/miniblog
-        - /opt/miniblog/nginx
-      
-    - name: Install packages for Docker repository
-  ansible.builtin.apt:
-    name:
-      - ca-certificates
-      - curl
-    state: present
-    update_cache: true
+        - "{{ app_dir }}"
+        - "{{ app_dir }}/nginx"
+        - "{{ app_dir }}/static"
 
-- name: Create keyrings directory
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: "0755"
+    - name: Copy the Compose file
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../docker-compose.product.yml"
+        dest: "{{ app_dir }}/docker-compose.yml"
+        mode: "0644"
 
-- name: Download Docker GPG key
-  ansible.builtin.get_url:
-    url: https://download.docker.com/linux/ubuntu/gpg
-    dest: /etc/apt/keyrings/docker.asc
-    mode: "0644"
+    - name: Copy the Nginx config
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../nginx/nginx.production.conf"
+        dest: "{{ app_dir }}/nginx/nginx.production.conf"
+        mode: "0644"
+      register: nginx_config
 
-- name: Add Docker repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [arch={{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}
-      signed-by=/etc/apt/keyrings/docker.asc]
-      https://download.docker.com/linux/ubuntu
-      {{ ansible_distribution_release }} stable
-    filename: docker
-    state: present
+    - name: Copy static files
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../static/"
+        dest: "{{ app_dir }}/static/"
+        mode: "0644"
+        directory_mode: "0755"
 
-- name: Install Docker
-  ansible.builtin.apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose-plugin
-    state: present
-    update_cache: true
+    - name: Create the .env file
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ app_dir }}/.env"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
 
-- name: Add user to docker group
-  ansible.builtin.user:
-    name: "{{ ansible_user }}"
-    groups: docker
-    append: true
+    - name: Start the application
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_dir }}"
+        pull: always
+        state: present
+        remove_orphans: true
+        wait: true
+        wait_timeout: 120
+
+    # Файл подключён в контейнер напрямую, поэтому после его замены нужен новый контейнер
+    - name: Recreate Nginx after a config change
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_dir }}"
+        services:
+          - nginx
+        recreate: always
+        state: present
+      when: nginx_config is changed
+
+    - name: Check the application through Nginx
+      ansible.builtin.uri:
+        url: http://127.0.0.1/health
+        status_code: 200
+      register: health
+      until: health.status == 200
+      retries: 10
+      delay: 3
